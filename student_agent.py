@@ -610,7 +610,7 @@ def init_model():
         approximator = NTupleApproximator(board_size=4, patterns=patterns)
         approximator.load("./my2048-1.bin", size_t_fmt='Q')
         mcts_agent = td_mcts(approximator, num_iterations=100, exploration_weight=1.0, scaling=4096)
-        
+
 def get_action(state, score):
     init_model()
     root = NodeForState(state)
@@ -631,5 +631,5 @@ def get_action(state, score):
         action =  mcts_agent.best_action(root, legal_actions)
     # print("score:", score)
     # action, _ = best_move_selection(state, approximator)
-    print("action:", action)
+    # print("action:", action)
     return action
