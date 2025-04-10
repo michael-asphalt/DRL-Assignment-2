@@ -31,7 +31,7 @@ jobs:
     - name: 3. Download file using gdown
       run: |
         pip install gdown
-        gdown https://drive.google.com/uc?id=1BSErvtqrlQsTZh0Nmx54Sua9aYSYj1rd
+        gdown https://drive.google.com/uc?id=1dwBd8BocVzpnSg-EVNk5ztrESbtax9L5
 
     - name: 4. Ensure env.so is executable
       run: chmod +x env.cpython-38-x86_64-linux-gnu.so

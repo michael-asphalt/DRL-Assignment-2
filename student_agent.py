@@ -580,25 +580,25 @@ class td_mcts:
                     best_action = action
         return best_action
 
-patterns = [
-    [0, 1, 2, 4, 5, 6], 
-    [1, 2, 5, 6, 9, 13],
-    [0, 1, 2, 3, 4, 5],
-    [0, 1, 5, 6, 7, 10],
-    [0, 1, 2, 5, 9, 10],
-    [0, 1, 5, 9, 13, 14],
-    [0, 1, 5, 8, 9, 13],
-    [0, 1, 2, 4, 6, 10]
-]
-
 # patterns = [
+#     [0, 1, 2, 4, 5, 6], 
+#     [1, 2, 5, 6, 9, 13],
 #     [0, 1, 2, 3, 4, 5],
-#     [4, 5, 6, 7, 8, 9],
-#     [0, 1, 2, 4, 5, 6],
-#     [4, 5, 6, 8, 9, 10]
+#     [0, 1, 5, 6, 7, 10],
+#     [0, 1, 2, 5, 9, 10],
+#     [0, 1, 5, 9, 13, 14],
+#     [0, 1, 5, 8, 9, 13],
+#     [0, 1, 2, 4, 6, 10]
 # ]
+
+patterns = [
+    [0, 1, 2, 3, 4, 5],
+    [4, 5, 6, 7, 8, 9],
+    [0, 1, 2, 4, 5, 6],
+    [4, 5, 6, 8, 9, 10]
+]
 approximator = NTupleApproximator(board_size=4, patterns=patterns)
-approximator.load("./my2048-0.bin", size_t_fmt='Q')
+approximator.load("./my2048-1.bin", size_t_fmt='Q')
 
 mcts_agent = td_mcts(approximator, num_iterations=100, exploration_weight=1.0, scaling=4096)
 
@@ -608,9 +608,9 @@ def init_model():
     if approximator is None:
         gc.collect() 
         approximator = NTupleApproximator(board_size=4, patterns=patterns)
-        approximator.load("./my2048-0.bin", size_t_fmt='Q')
+        approximator.load("./my2048-1.bin", size_t_fmt='Q')
         mcts_agent = td_mcts(approximator, num_iterations=100, exploration_weight=1.0, scaling=4096)
-
+        
 def get_action(state, score):
     init_model()
     root = NodeForState(state)
@@ -631,4 +631,5 @@ def get_action(state, score):
         action =  mcts_agent.best_action(root, legal_actions)
     # print("score:", score)
     # action, _ = best_move_selection(state, approximator)
+    print("action:", action)
     return action
