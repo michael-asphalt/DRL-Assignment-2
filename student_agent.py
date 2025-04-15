@@ -274,15 +274,14 @@ def compress(row):
     return new_row
 
 def merge_with_reward(row):
-    # Recursively merge adjacent equal tiles and compute reward.
     row = row.copy()
     def rec(i, current_reward):
         if i >= 3:
             return row, current_reward
         if row[i] != 0 and row[i] == row[i + 1]:
+            row[i + 1] = 0
             row[i] *= 2
             current_reward += row[i]
-            row[i + 1] = 0
         return rec(i + 1, current_reward)
     return rec(0, 0)
 
@@ -355,13 +354,17 @@ def get_afterstate_and_reward(board, action):
 
 def is_move_legal(board, action):
     after_board, _ = get_afterstate_and_reward(board, action)
-    return not np.array_equal(board, after_board)
+    if np.array_equal(board, after_board):
+        return False
+    return True
 
 def add_random_tile(board):
     empty = list(zip(*np.where(board == 0)))
     if empty:
         board_new = board.copy()
-        i, j = random.choice(empty)
+        tile = random.choice(empty)
+        i = tile[0]
+        j = tile[1]
         board_new[i, j] = 2 if random.random() < 0.9 else 4
         return board_new
     else:
@@ -540,38 +543,55 @@ patterns = [
     [0, 1, 2, 4, 5, 6],
     [4, 5, 6, 8, 9, 10]
 ]
+
 approximator = NTupleApproximator(board_size=4, patterns=patterns)
 approximator.load("./my2048-1.bin", size_t_fmt='Q')
 
 mcts_agent = td_mcts(approximator, num_iterations=100, exploration_weight=1.0, scaling=4096)
 
 def init_model():
-    global approximator
-    global mcts_agent
-    if approximator is None:
-        gc.collect() 
-        approximator = NTupleApproximator(board_size=4, patterns=patterns)
-        approximator.load("./my2048-1.bin", size_t_fmt='Q')
-        mcts_agent = td_mcts(approximator, num_iterations=100, exploration_weight=1.0, scaling=4096)
+    global approximator, mcts_agent
+    if approximator is not None:
+        return
+    gc.collect()
+    approximator = NTupleApproximator(board_size=4, patterns=patterns)
+    approximator.load("./my2048-1.bin", size_t_fmt='Q')
+    mcts_agent = td_mcts(approximator, num_iterations=100, exploration_weight=1.0, scaling=4096)
+
+def collect_legal_actions(temp_env):
+    actions = []
+    idx = 0
+    while idx < 4:
+        if temp_env.is_move_legal(idx):
+            actions.append(idx)
+        idx += 1
+    return actions
+
+def run_mcts_iterations(root, score, legal_actions):
+    iteration = 0
+    while iteration < mcts_agent.num_iterations:
+        env = Game2048Env()
+        env.board = root.board.copy()
+        env.score = score
+        leaf, path = mcts_agent.select(root, env, legal_actions)
+        if leaf.visits > 0:
+            act = path[-1][0] if path else None
+            leaf = mcts_agent.expand(leaf, env, act)
+        sim_value = mcts_agent.simulate(leaf)
+        mcts_agent.backpropagate(leaf, sim_value, path)
+        iteration += 1
 
 def get_action(state, score):
     init_model()
     root = NodeForState(state)
     temp_env = mcts_agent.tmp_env(state)
-    legal_actions = [a for a in range(4) if temp_env.is_move_legal(a)]
-    if not legal_actions:
-        action = 0
+    
+    legal_actions = collect_legal_actions(temp_env)
+    
+    if len(legal_actions) == 0:
+        chosen_action = 0
     else:
-        for _ in range(mcts_agent.num_iterations):
-            env = Game2048Env()
-            env.board = root.board.copy()
-            env.score = score
-            leaf, path = mcts_agent.select(root, env, legal_actions)
-            if leaf.visits > 0:
-                leaf = mcts_agent.expand(leaf, env, path[-1][0] if path else None)
-            value = mcts_agent.simulate(leaf)
-            mcts_agent.backpropagate(leaf, value, path)
-        action =  mcts_agent.best_action(root, legal_actions)
-    # print("score:", score)
-    # action, _ = best_move_selection(state, approximator)
-    return action
+        run_mcts_iterations(root, score, legal_actions)
+        chosen_action = mcts_agent.best_action(root, legal_actions)
+    
+    return chosen_action
