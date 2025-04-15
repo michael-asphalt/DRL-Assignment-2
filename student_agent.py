@@ -217,36 +217,61 @@ class NTupleApproximator:
     def __init__(self, board_size, patterns, iso=8):
         self.board_size = board_size
         self.features = []
-        for pattern in patterns:
-            self.features.append(helper.PatternFeature(pattern, iso))
+        
+        # Recursively initialize features from the patterns list.
+        def init_features(idx):
+            if idx < len(patterns):
+                # self.features.append(helper.PatternFeature(patterns[idx], iso))
+                self.features.append(PatternFeature(patterns[idx], iso))
+                init_features(idx + 1)
+        init_features(0)
 
     def value(self, flat_board):
-        return sum(feat.estimate(flat_board) for feat in self.features)
+        # Recursively sum the estimates from each feature.
+        def rec_value(i):
+            if i >= len(self.features):
+                return 0
+            return self.features[i].estimate(flat_board) + rec_value(i + 1)
+        return rec_value(0)
 
     def update(self, flat_board, delta, alpha):
-        for feat in self.features:
-            feat.update(flat_board, alpha * delta)
+        # Recursively update each feature.
+        def rec_update(i):
+            if i < len(self.features):
+                self.features[i].update(flat_board, alpha * delta)
+                rec_update(i + 1)
+        rec_update(0)
 
     def load(self, file_path, size_t_fmt='Q'):
         size_t_size = struct.calcsize(size_t_fmt)
         with open(file_path, 'rb') as f:
             count_bytes = f.read(size_t_size)
             struct.unpack(size_t_fmt, count_bytes)[0]
-            for feat in self.features:
-                feat.load_from_stream(f, size_t_fmt)
+            def rec_load(i):
+                if i < len(self.features):
+                    self.features[i].load_from_stream(f, size_t_fmt)
+                    rec_load(i + 1)
+            rec_load(0)
 
 def tile_to_number(tile):
-    if tile == 0:
-        return 0
-    else:
+    # Use a simplified conditional expression for clarity.
+    if tile:
         return int(math.log(tile, 2))
+    return 0
 
 def convert_to_flat(env_board):
     flat = []
-    for i in range(env_board.shape[0]):
-        for j in range(env_board.shape[1]):
-            tile = env_board[i, j]
-            flat.append(tile_to_number(tile))
+    nrows, ncols = env_board.shape
+    # Recursively traverse the board in row-major order.
+    def rec(i, j):
+        if i == nrows:
+            return
+        if j == ncols:
+            rec(i + 1, 0)
+        else:
+            flat.append(tile_to_number(env_board[i, j]))
+            rec(i, j + 1)
+    rec(0, 0)
     return flat
 
 def compress(row):
@@ -255,14 +280,17 @@ def compress(row):
     return new_row
 
 def merge_with_reward(row):
-    reward = 0
+    # Recursively merge adjacent equal tiles and compute reward.
     row = row.copy()
-    for i in range(3):
+    def rec(i, current_reward):
+        if i >= 3:
+            return row, current_reward
         if row[i] != 0 and row[i] == row[i + 1]:
             row[i] *= 2
-            reward += row[i]
+            current_reward += row[i]
             row[i + 1] = 0
-    return row, reward
+        return rec(i + 1, current_reward)
+    return rec(0, 0)
 
 def compress_and_merge(row):
     compressed = compress(row)
@@ -272,57 +300,69 @@ def compress_and_merge(row):
 
 def afterstate_move_left(board):
     new_board = board.copy()
-    total_reward = 0
-    for i in range(4):
+    # Recursively process each row.
+    def process_row(i, total_reward):
+        if i >= 4:
+            return total_reward
         row = new_board[i, :].copy()
         new_row, reward = compress_and_merge(row)
-        total_reward += reward
         new_board[i, :] = new_row
+        return process_row(i + 1, total_reward + reward)
+    total_reward = process_row(0, 0)
     return new_board, total_reward
 
 def afterstate_move_right(board):
     new_board = board.copy()
-    total_reward = 0
-    for i in range(4):
+    # Recursively process each row in reverse.
+    def process_row(i, total_reward):
+        if i >= 4:
+            return total_reward
         row = new_board[i, ::-1].copy()
         new_row, reward = compress_and_merge(row)
-        total_reward += reward
         new_board[i, :] = new_row[::-1]
+        return process_row(i + 1, total_reward + reward)
+    total_reward = process_row(0, 0)
     return new_board, total_reward
 
 def afterstate_move_up(board):
     new_board = board.copy()
-    total_reward = 0
-    for j in range(4):
+    # Recursively process each column.
+    def process_col(j, total_reward):
+        if j >= 4:
+            return total_reward
         col = new_board[:, j].copy()
         col = compress(col)
         merged, reward = merge_with_reward(col)
         final_col = compress(merged)
-        total_reward += reward
         new_board[:, j] = final_col
+        return process_col(j + 1, total_reward + reward)
+    total_reward = process_col(0, 0)
     return new_board, total_reward
 
 def afterstate_move_down(board):
     new_board = board.copy()
-    total_reward = 0
-    for j in range(4):
+    # Recursively process each column in reverse.
+    def process_col(j, total_reward):
+        if j >= 4:
+            return total_reward
         col = new_board[::-1, j].copy()
         col = compress(col)
         merged, reward = merge_with_reward(col)
         final_col = compress(merged)
-        total_reward += reward
         new_board[:, j] = final_col[::-1]
+        return process_col(j + 1, total_reward + reward)
+    total_reward = process_col(0, 0)
     return new_board, total_reward
 
 def get_afterstate_and_reward(board, action):
-    if action == 0:
-        return afterstate_move_up(board)
-    elif action == 1:
-        return afterstate_move_down(board)
-    elif action == 2:
-        return afterstate_move_left(board)
-    elif action == 3:
-        return afterstate_move_right(board)
+    # Use a dictionary to map actions to functions.
+    move_funcs = {
+        0: afterstate_move_up,
+        1: afterstate_move_down,
+        2: afterstate_move_left,
+        3: afterstate_move_right
+    }
+    return move_funcs.get(action, lambda b: (b, 0))(board)
 
 def is_move_legal(board, action):
     after_board, _ = get_afterstate_and_reward(board, action)
@@ -330,28 +370,33 @@ def is_move_legal(board, action):
 
 def add_random_tile(board):
     empty = list(zip(*np.where(board == 0)))
-    if not empty:
+    if empty:
+        board_new = board.copy()
+        i, j = random.choice(empty)
+        board_new[i, j] = 2 if random.random() < 0.9 else 4
+        return board_new
+    else:
         return board.copy()
-    board_new = board.copy()
-    i, j = random.choice(empty)
-    board_new[i, j] = 2 if random.random() < 0.9 else 4
-    return board_new
 
 def best_move_selection(env_board, approximator):
     best_action = None
     best_value = -float('inf')
     current = env_board
-    for action in range(4):
+    
+    # Recursively evaluate each possible action.
+    def rec(action, best_action, best_value):
+        if action >= 4:
+            return best_action, best_value
         after, _ = get_afterstate_and_reward(current, action)
         if np.array_equal(current, after):
-            continue
+            return rec(action + 1, best_action, best_value)
         flat_after = convert_to_flat(after)
         val = approximator.value(flat_after)
         if val > best_value:
-            best_value = val
-            best_action = action
-    return best_action, best_value
-
+            best_action, best_value = action, val
+        return rec(action + 1, best_action, best_value)
+    
+    return rec(0, best_action, best_value)
 
 class NodeForState:
     def __init__(self, board, parent=None):
