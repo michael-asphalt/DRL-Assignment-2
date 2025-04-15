@@ -176,6 +176,43 @@ class Game2048Env(gym.Env):
         plt.gca().invert_yaxis()
         plt.show()
 
+    def simulate_row_move(self, row):
+        new_row = row[row != 0]
+        new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')
+        for i in range(len(new_row) - 1):
+            if new_row[i] == new_row[i + 1] and new_row[i] != 0:
+                new_row[i] *= 2
+                new_row[i + 1] = 0
+        new_row = new_row[new_row != 0]
+        new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')
+        return new_row
+
+    def is_move_legal(self, action):
+        temp_board = self.board.copy()
+
+        if action == 0:  # Move up
+            for j in range(self.size):
+                col = temp_board[:, j]
+                new_col = self.simulate_row_move(col)
+                temp_board[:, j] = new_col
+        elif action == 1:  # Move down
+            for j in range(self.size):
+                col = temp_board[:, j][::-1]
+                new_col = self.simulate_row_move(col)
+                temp_board[:, j] = new_col[::-1]
+        elif action == 2:  # Move left
+            for i in range(self.size):
+                row = temp_board[i]
+                temp_board[i] = self.simulate_row_move(row)
+        elif action == 3:  # Move right
+            for i in range(self.size):
+                row = temp_board[i][::-1]
+                new_row = self.simulate_row_move(row)
+                temp_board[i] = new_row[::-1]
+        else:
+            raise ValueError("Invalid action")
+        return not np.array_equal(self.board, temp_board)
+
 def tile_to_number(tile):
     return 0 if tile == 0 else int(math.log(tile, 2))
 
@@ -399,10 +436,10 @@ class td_mcts:
             path_history.append((current_node, chosen_move))
             return self.recursive_select(current_node.children[chosen_move], None, path_history)
 
-    def select(self, current_node, env, available_moves=None):
+    def select(self, current_node, available_moves=None):
         return self.recursive_select(current_node, available_moves, [])
 
-    def expand(self, node, env, previous_action=None):
+    def expand(self, node):
         if node.node_type == 0:
             legal_actions = [a for a in range(4) if is_move_legal(node.board, a)]
             def rec_expand(actions):
@@ -522,9 +559,9 @@ def iterate_mcts(n, root, score, legal_actions):
     env = Game2048Env()
     env.board = root.board.copy()
     env.score = score
-    leaf, path = mcts_agent.select(root, env, legal_actions)
+    leaf, path = mcts_agent.select(root, legal_actions)
     if leaf.visits > 0:
-        leaf = mcts_agent.expand(leaf, env, path[-1][0] if path else None)
+        leaf = mcts_agent.expand(leaf)
     val = mcts_agent.simulate(leaf)
     mcts_agent.backpropagate(leaf, val, path)
     iterate_mcts(n - 1, root, score, legal_actions)
