@@ -176,143 +176,78 @@ class Game2048Env(gym.Env):
         plt.gca().invert_yaxis()
         plt.show()
 
-    def simulate_row_move(self, row):
-        new_row = row[row != 0]
-        new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')
-        for i in range(len(new_row) - 1):
-            if new_row[i] == new_row[i + 1] and new_row[i] != 0:
-                new_row[i] *= 2
-                new_row[i + 1] = 0
-        new_row = new_row[new_row != 0]
-        new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')
-        return new_row
-
-    def is_move_legal(self, action):
-        temp_board = self.board.copy()
-
-        if action == 0:  # Move up
-            for j in range(self.size):
-                col = temp_board[:, j]
-                new_col = self.simulate_row_move(col)
-                temp_board[:, j] = new_col
-        elif action == 1:  # Move down
-            for j in range(self.size):
-                col = temp_board[:, j][::-1]
-                new_col = self.simulate_row_move(col)
-                temp_board[:, j] = new_col[::-1]
-        elif action == 2:  # Move left
-            for i in range(self.size):
-                row = temp_board[i]
-                temp_board[i] = self.simulate_row_move(row)
-        elif action == 3:  # Move right
-            for i in range(self.size):
-                row = temp_board[i][::-1]
-                new_row = self.simulate_row_move(row)
-                temp_board[i] = new_row[::-1]
-        else:
-            raise ValueError("Invalid action")
-        return not np.array_equal(self.board, temp_board)
-
-class NTupleApproximator:
-    def __init__(self, board_size, patterns, iso=8):
-        self.board_size = board_size
-        self.features = []
-        for pattern in patterns:
-            self.features.append(helper.PatternFeature(pattern, iso))
-
-    def value(self, flat_board):
-        return sum(feat.estimate(flat_board) for feat in self.features)
-
-    def update(self, flat_board, delta, alpha):
-        for feat in self.features:
-            feat.update(flat_board, alpha * delta)
-
-    def load(self, file_path, size_t_fmt='Q'):
-        size_t_size = struct.calcsize(size_t_fmt)
-        with open(file_path, 'rb') as f:
-            count_bytes = f.read(size_t_size)
-            struct.unpack(size_t_fmt, count_bytes)[0]
-            for feat in self.features:
-                feat.load_from_stream(f, size_t_fmt)
-
 def tile_to_number(tile):
-    if tile == 0:
-        return 0
-    else:
-        return int(math.log(tile, 2))
+    return 0 if tile == 0 else int(math.log(tile, 2))
 
-def convert_to_flat(env_board):
-    flat = []
-    for i in range(env_board.shape[0]):
-        for j in range(env_board.shape[1]):
-            tile = env_board[i, j]
-            flat.append(tile_to_number(tile))
-    return flat
+def convert_to_flat(env_board, i=0, j=0, flat=None):
+    if flat is None:
+        flat = []
+    rows, cols = env_board.shape
+    if i >= rows:
+        return flat
+    if j >= cols:
+        return convert_to_flat(env_board, i + 1, 0, flat)
+    flat.append(tile_to_number(env_board[i, j]))
+    return convert_to_flat(env_board, i, j + 1, flat)
+
+def merge_with_reward_recursive(row, index, reward):
+    if index >= len(row) - 1:
+        return row, reward
+    if row[index] != 0 and row[index] == row[index + 1]:
+        row[index] *= 2
+        reward += row[index]
+        row[index + 1] = 0
+    return merge_with_reward_recursive(row, index + 1, reward)
+
+def merge_with_reward(row):
+    return merge_with_reward_recursive(row.copy(), 0, 0)
+
+def compress_and_merge(row):
+    comp = compress(row)
+    merged, reward = merge_with_reward(comp)
+    final = compress(merged)
+    return final, reward
 
 def compress(row):
     new_row = row[row != 0]
     new_row = np.pad(new_row, (0, 4 - len(new_row)), mode='constant')
     return new_row
 
-def merge_with_reward(row):
-    reward = 0
-    row = row.copy()
-    for i in range(3):
-        if row[i] != 0 and row[i] == row[i + 1]:
-            row[i] *= 2
-            reward += row[i]
-            row[i + 1] = 0
-    return row, reward
+def afterstate_move_left(board, i=0, total_reward=0):
+    if i >= 4:
+        return board, total_reward
+    row = board[i, :].copy()
+    new_row, reward = compress_and_merge(row)
+    board[i, :] = new_row
+    return afterstate_move_left(board, i + 1, total_reward + reward)
 
-def compress_and_merge(row):
-    compressed = compress(row)
-    merged, reward = merge_with_reward(compressed)
-    final = compress(merged)
-    return final, reward
+def afterstate_move_right(board, i=0, total_reward=0):
+    if i >= 4:
+        return board, total_reward
+    row = board[i, ::-1].copy()
+    new_row, reward = compress_and_merge(row)
+    board[i, :] = new_row[::-1]
+    return afterstate_move_right(board, i + 1, total_reward + reward)
 
-def afterstate_move_left(board):
-    new_board = board.copy()
-    total_reward = 0
-    for i in range(4):
-        row = new_board[i, :].copy()
-        new_row, reward = compress_and_merge(row)
-        total_reward += reward
-        new_board[i, :] = new_row
-    return new_board, total_reward
+def afterstate_move_up(board, j=0, total_reward=0):
+    if j >= 4:
+        return board, total_reward
+    col = board[:, j].copy()
+    comp_col = compress(col)
+    merged, reward = merge_with_reward(comp_col)
+    final_col = compress(merged)
+    board[:, j] = final_col
+    return afterstate_move_up(board, j + 1, total_reward + reward)
 
-def afterstate_move_right(board):
-    new_board = board.copy()
-    total_reward = 0
-    for i in range(4):
-        row = new_board[i, ::-1].copy()
-        new_row, reward = compress_and_merge(row)
-        total_reward += reward
-        new_board[i, :] = new_row[::-1]
-    return new_board, total_reward
-
-def afterstate_move_up(board):
-    new_board = board.copy()
-    total_reward = 0
-    for j in range(4):
-        col = new_board[:, j].copy()
-        col = compress(col)
-        merged, reward = merge_with_reward(col)
-        final_col = compress(merged)
-        total_reward += reward
-        new_board[:, j] = final_col
-    return new_board, total_reward
-
-def afterstate_move_down(board):
-    new_board = board.copy()
-    total_reward = 0
-    for j in range(4):
-        col = new_board[::-1, j].copy()
-        col = compress(col)
-        merged, reward = merge_with_reward(col)
-        final_col = compress(merged)
-        total_reward += reward
-        new_board[:, j] = final_col[::-1]
-    return new_board, total_reward
+def afterstate_move_down(board, j=0, total_reward=0):
+    if j >= 4:
+        return board, total_reward
+    col = board[::-1, j].copy()
+    comp_col = compress(col)
+    merged, reward = merge_with_reward(comp_col)
+    final_col = compress(merged)
+    board[:, j] = final_col[::-1]
+    return afterstate_move_down(board, j + 1, total_reward + reward)
 
 def get_afterstate_and_reward(board, action):
     if action == 0:
@@ -338,24 +273,58 @@ def add_random_tile(board):
     return board_new
 
 def best_move_selection(env_board, approximator):
-    best_action = None
-    best_value = -float('inf')
-    current = env_board
-    for action in range(4):
-        after, _ = get_afterstate_and_reward(current, action)
-        if np.array_equal(current, after):
-            continue
+    # Recursively examine actions 0..3 to choose the best.
+    def rec_best(action, best_pair):
+        if action >= 4:
+            return best_pair
+        after, _ = get_afterstate_and_reward(env_board, action)
+        if np.array_equal(env_board, after):
+            return rec_best(action + 1, best_pair)
         flat_after = convert_to_flat(after)
-        val = approximator.value(flat_after)
-        if val > best_value:
-            best_value = val
-            best_action = action
-    return best_action, best_value
+        current_val = approximator.value(flat_after)
+        if current_val > best_pair[1]:
+            best_pair = (action, current_val)
+        return rec_best(action + 1, best_pair)
+    return rec_best(0, (None, -float('inf')))
 
+class NTupleApproximator:
+    def __init__(self, board_size, patterns, iso=8):
+        self.board_size = board_size
+        self.features = []
+        for pat in patterns:
+            self.features.append(helper.PatternFeature(pat, iso))
+
+    def _recursive_value(self, feats, flat_board):
+        if not feats:
+            return 0
+        return feats[0].estimate(flat_board) + self._recursive_value(feats[1:], flat_board)
+
+    def value(self, flat_board):
+        return self._recursive_value(self.features, flat_board)
+
+    def _recursive_update(self, feats, flat_board, delta, alpha):
+        if not feats:
+            return
+        feats[0].update(flat_board, alpha * delta)
+        self._recursive_update(feats[1:], flat_board, delta, alpha)
+
+    def update(self, flat_board, delta, alpha):
+        self._recursive_update(self.features, flat_board, delta, alpha)
+
+    def load(self, file_path, size_t_fmt='Q'):
+        size_t_size = struct.calcsize(size_t_fmt)
+        with open(file_path, 'rb') as f:
+            count_bytes = f.read(size_t_size)
+            struct.unpack(size_t_fmt, count_bytes)[0]
+            for feat in self.features:
+                feat.load_from_stream(f, size_t_fmt)
+
+# ----------------------------------------------------------------------
+# MCTS node classes using recursive versions for internal loops
 
 class NodeForState:
     def __init__(self, board, parent=None):
-        self.node_type = 0 # 0 for state node, 1 for afterstate node
+        self.node_type = 0  # 0 for state node, 1 for afterstate node
         self.board = board.copy()
         self.parent = parent
         self.children = {}  # action -> NodeForAfterstate
@@ -363,21 +332,27 @@ class NodeForState:
         self.value = 0.0
 
     def is_fully_expanded(self, legal_actions):
-        return all(action in self.children for action in legal_actions)
+        # Recursive check for each legal action in the children.
+        def rec_check(actions):
+            if not actions:
+                return True
+            return (actions[0] in self.children) and rec_check(actions[1:])
+        return rec_check(legal_actions)
 
     def select_child(self, legal_actions, exploration_weight=1.0):
-        best_score = -float('inf')
-        best_action = None
-        for action in legal_actions:
-            if action not in self.children:
-                return action
-            else:
-              child = self.children[action]
-              score = child.value + exploration_weight * math.sqrt(math.log(self.visits) / child.visits)
+        def rec_select(actions, best_act, best_score):
+            if not actions:
+                return best_act
+            a = actions[0]
+            if a not in self.children:
+                return a  # if not expanded, return immediately
+            child = self.children[a]
+            # Use UCT formula
+            score = child.value + exploration_weight * math.sqrt(math.log(self.visits) / child.visits)
             if score > best_score:
-                best_score = score
-                best_action = action
-        return best_action
+                best_score, best_act = score, a
+            return rec_select(actions[1:], best_act, best_score)
+        return rec_select(legal_actions, None, -float('inf'))
 
 class NodeForAfterstate:
     def __init__(self, board, parent=None, reward=0):
@@ -389,8 +364,11 @@ class NodeForAfterstate:
         self.value = 0.0
         self.reward = reward
 
-    def is_fully_expanded(self, empty_location):
-        return len(self.children) == len(empty_location) * 2
+    def is_fully_expanded(self, empty_locations):
+        return len(self.children) == len(empty_locations) * 2
+
+# ----------------------------------------------------------------------
+# TD-MCTS using recursion instead of loops in its core methods
 
 class td_mcts:
     def __init__(self, approximator, num_iterations=1000, exploration_weight=1.0, scaling=4096):
@@ -403,56 +381,66 @@ class td_mcts:
         env = Game2048Env()
         env.board = board.copy()
         return env
+
+    def recursive_select(self, current_node, available_moves, path_history):
+        if current_node.node_type != 0:
+            return current_node, path_history
+        if available_moves is None:
+            temp_game = self.tmp_env(current_node.board)
+            available_moves = [move for move in range(4) if temp_game.is_move_legal(move)]
+        if not current_node.is_fully_expanded(available_moves):
+            chosen_move = current_node.select_child(available_moves, self.exploration_weight)
+            if chosen_move not in current_node.children:
+                return current_node, path_history
+            path_history.append((current_node, chosen_move))
+            return self.recursive_select(current_node.children[chosen_move], None, path_history)
+        else:
+            chosen_move = current_node.select_child(available_moves, self.exploration_weight)
+            path_history.append((current_node, chosen_move))
+            return self.recursive_select(current_node.children[chosen_move], None, path_history)
+
     def select(self, current_node, env, available_moves=None):
-        path_history = []
-
-        # Traverse through state nodes.
-        while current_node.node_type == 0:
-            if available_moves is None:
-                temp_game = self.tmp_env(current_node.board)
-                available_moves = [move for move in range(4) if temp_game.is_move_legal(move)]
-            if not current_node.is_fully_expanded(available_moves):
-                chosen_move = current_node.select_child(available_moves, self.exploration_weight)
-                if chosen_move not in current_node.children:
-                    return current_node, path_history
-                path_history.append((current_node, chosen_move))
-                current_node = current_node.children[chosen_move]
-            else:
-                chosen_move = current_node.select_child(available_moves, self.exploration_weight)
-                path_history.append((current_node, chosen_move))
-                current_node = current_node.children[chosen_move]
-                available_moves = None  # Reset for the next state node
-
-        return current_node, path_history
-
+        return self.recursive_select(current_node, available_moves, [])
 
     def expand(self, node, env, previous_action=None):
         if node.node_type == 0:
             legal_actions = [a for a in range(4) if is_move_legal(node.board, a)]
-            for action in legal_actions:
-                if action not in node.children:
-                    afterstate, reward = get_afterstate_and_reward(node.board, action)
-                    afterstate_node = NodeForAfterstate(afterstate, node, reward)
-                    node.children[action] = afterstate_node
-                    return afterstate_node
-
-                elif node.node_type == 1:
-                    empty_location = list(zip(*np.where(node.board == 0)))
-            for row, col in empty_location:
-                key1 = (row, col, 2)
-                key2 = (row, col, 4)
+            def rec_expand(actions):
+                if not actions:
+                    return None
+                a = actions[0]
+                if a not in node.children:
+                    afterstate, reward = get_afterstate_and_reward(node.board, a)
+                    new_node = NodeForAfterstate(afterstate, node, reward)
+                    node.children[a] = new_node
+                    return new_node
+                return rec_expand(actions[1:])
+            result = rec_expand(legal_actions)
+            if result is not None:
+                return result
+        elif node.node_type == 1:
+            empty_locations = list(zip(*np.where(node.board == 0)))
+            def rec_expand_after(empties):
+                if not empties:
+                    return None
+                row, col = empties[0]
+                key1, key2 = (row, col, 2), (row, col, 4)
                 if key1 not in node.children:
                     new_board = node.board.copy()
                     new_board[row, col] = 2
                     state_node = NodeForState(new_board, node)
-                    self.children[(row, col, 2)] = state_node
+                    node.children[key1] = state_node
                     return state_node
                 elif key2 not in node.children:
                     new_board = node.board.copy()
                     new_board[row, col] = 4
                     state_node = NodeForState(new_board, node)
-                    self.children[(row, col, 4)] = state_node
+                    node.children[key2] = state_node
                     return state_node
+                return rec_expand_after(empties[1:])
+            result = rec_expand_after(empty_locations)
+            if result is not None:
+                return result
         return node
 
     def simulate(self, node):
@@ -464,43 +452,49 @@ class td_mcts:
             legal_actions = [a for a in range(4) if is_move_legal(board, a)]
             if not legal_actions:
                 return 0
-            max_value = -float('inf')
-            for action in legal_actions:
-                new_board, reward = get_afterstate_and_reward(board, action)
+            def rec_simulate(actions, best_val=-float('inf')):
+                if not actions:
+                    return best_val
+                a = actions[0]
+                new_board, reward = get_afterstate_and_reward(board, a)
                 value = self.approximator.value(convert_to_flat(new_board))
                 action_value = (reward + value) / self.scaling
-                max_value = max(max_value, action_value)
-            return max_value
-
+                best_val = max(best_val, action_value)
+                return rec_simulate(actions[1:], best_val)
+            return rec_simulate(legal_actions)
 
     def backpropagate(self, node, value, trajectory):
         node.visits += 1
-        x = (value - node.value) / node.visits
-        node.value += x
-
-        for parent, action in reversed(trajectory):
+        diff = (value - node.value) / node.visits
+        node.value += diff
+        rev_traj = list(reversed(trajectory))
+        def rec_backprop(traj):
+            if not traj:
+                return
+            parent, action = traj[0]
             child = parent.children[action]
-            value = child.value
             parent.visits += 1
-            x = (value - parent.value) / parent.visits
-            parent.value += x
+            d = (child.value - parent.value) / parent.visits
+            parent.value += d
+            rec_backprop(traj[1:])
+        rec_backprop(rev_traj)
 
     def best_action(self, root, legal_actions):
-        best_action = None
-        best_value = -float('inf')
-        for action in legal_actions:
-            if action not in root.children:
-                value = 0
-                if value > best_value:
-                    best_value = value
-                    best_action = action
+        def rec_best(actions, best_act=None, best_val=-float('inf')):
+            if not actions:
+                return best_act
+            a = actions[0]
+            if a not in root.children:
+                val = 0
             else:
-                child = root.children[action]
-                value = child.visits
-                if value > best_value:
-                    best_value = child.visits
-                    best_action = action
-        return best_action
+                val = root.children[a].visits
+            if val > best_val:
+                best_act, best_val = a, val
+            return rec_best(actions[1:], best_act, best_val)
+        return rec_best(legal_actions)
+
+# ----------------------------------------------------------------------
+# Model initialization and action selection
 
 patterns = [
     [0, 1, 2, 3, 4, 5],
@@ -517,10 +511,23 @@ def init_model():
     global approximator
     global mcts_agent
     if approximator is None:
-        gc.collect() 
+        gc.collect()
         approximator = NTupleApproximator(board_size=4, patterns=patterns)
         approximator.load("./my2048-1.bin", size_t_fmt='Q')
         mcts_agent = td_mcts(approximator, num_iterations=100, exploration_weight=1.0, scaling=4096)
+
+def iterate_mcts(n, root, score, legal_actions):
+    if n <= 0:
+        return
+    env = Game2048Env()
+    env.board = root.board.copy()
+    env.score = score
+    leaf, path = mcts_agent.select(root, env, legal_actions)
+    if leaf.visits > 0:
+        leaf = mcts_agent.expand(leaf, env, path[-1][0] if path else None)
+    val = mcts_agent.simulate(leaf)
+    mcts_agent.backpropagate(leaf, val, path)
+    iterate_mcts(n - 1, root, score, legal_actions)
 
 def get_action(state, score):
     init_model()
@@ -530,16 +537,6 @@ def get_action(state, score):
     if not legal_actions:
         action = 0
     else:
-        for _ in range(mcts_agent.num_iterations):
-            env = Game2048Env()
-            env.board = root.board.copy()
-            env.score = score
-            leaf, path = mcts_agent.select(root, env, legal_actions)
-            if leaf.visits > 0:
-                leaf = mcts_agent.expand(leaf, env, path[-1][0] if path else None)
-            value = mcts_agent.simulate(leaf)
-            mcts_agent.backpropagate(leaf, value, path)
-        action =  mcts_agent.best_action(root, legal_actions)
-    # print("score:", score)
-    # action, _ = best_move_selection(state, approximator)
+        iterate_mcts(mcts_agent.num_iterations, root, score, legal_actions)
+        action = mcts_agent.best_action(root, legal_actions)
     return action
