@@ -390,7 +390,7 @@ def best_move_selection(env_board, approximator):
 
 class NodeForState:
     def __init__(self, board, parent=None):
-        self.node_type = 0 # 0 for state node, 1 for afterstate node
+        self.node_type = 0  # 0 for state node, 1 for afterstate node
         self.board = board.copy()
         self.parent = parent
         self.children = {}  # action -> NodeForAfterstate
@@ -398,21 +398,27 @@ class NodeForState:
         self.value = 0.0
 
     def is_fully_expanded(self, legal_actions):
-        return all(action in self.children for action in legal_actions)
+        def rec_check(idx):
+            if idx >= len(legal_actions):
+                return True
+            if legal_actions[idx] not in self.children:
+                return False
+            return rec_check(idx + 1)
+        return rec_check(0)
 
     def select_child(self, legal_actions, exploration_weight=1.0):
-        best_score = -float('inf')
-        best_action = None
-        for action in legal_actions:
+        def rec_select(idx, best_score, best_action):
+            if idx >= len(legal_actions):
+                return best_action
+            action = legal_actions[idx]
             if action not in self.children:
                 return action
-            else:
-              child = self.children[action]
-              score = child.value + exploration_weight * math.sqrt(math.log(self.visits) / child.visits)
+            child = self.children[action]
+            score = float('inf') if child.visits == 0 else child.value + exploration_weight * math.sqrt(math.log(self.visits) / child.visits)
             if score > best_score:
-                best_score = score
-                best_action = action
-        return best_action
+                best_score, best_action = score, action
+            return rec_select(idx + 1, best_score, best_action)
+        return rec_select(0, -float('inf'), None)
 
 class NodeForAfterstate:
     def __init__(self, board, parent=None, reward=0):
@@ -425,7 +431,12 @@ class NodeForAfterstate:
         self.reward = reward
 
     def is_fully_expanded(self, empty_location):
-        return len(self.children) == len(empty_location) * 2
+        def rec_count(idx):
+            if idx >= len(empty_location):
+                return 0
+            return 2 + rec_count(idx + 1)
+        expected = rec_count(0)
+        return len(self.children) == expected
 
 class td_mcts:
     def __init__(self, approximator, num_iterations=1000, exploration_weight=1.0, scaling=4096):
@@ -438,104 +449,117 @@ class td_mcts:
         env = Game2048Env()
         env.board = board.copy()
         return env
+
     def select(self, current_node, env, available_moves=None):
-        path_history = []
-
-        # Traverse through state nodes.
-        while current_node.node_type == 0:
-            if available_moves is None:
-                temp_game = self.tmp_env(current_node.board)
-                available_moves = [move for move in range(4) if temp_game.is_move_legal(move)]
-            if not current_node.is_fully_expanded(available_moves):
-                chosen_move = current_node.select_child(available_moves, self.exploration_weight)
-                if chosen_move not in current_node.children:
-                    return current_node, path_history
-                path_history.append((current_node, chosen_move))
-                current_node = current_node.children[chosen_move]
+        def rec_select(node, moves, history):
+            if node.node_type != 0:
+                return node, history
+            if moves is None:
+                moves = []
+                temp_game = self.tmp_env(node.board)
+                for move in range(4):
+                    if temp_game.is_move_legal(move):
+                        moves.append(move)
+            if not node.is_fully_expanded(moves):
+                chosen_move = node.select_child(moves, self.exploration_weight)
+                if chosen_move not in node.children:
+                    return node, history
+                history.append((node, chosen_move))
+                return rec_select(node.children[chosen_move], None, history)
             else:
-                chosen_move = current_node.select_child(available_moves, self.exploration_weight)
-                path_history.append((current_node, chosen_move))
-                current_node = current_node.children[chosen_move]
-                available_moves = None  # Reset for the next state node
-
-        return current_node, path_history
-
+                chosen_move = node.select_child(moves, self.exploration_weight)
+                history.append((node, chosen_move))
+                return rec_select(node.children[chosen_move], None, history)
+        return rec_select(current_node, available_moves, [])
 
     def expand(self, node, env, previous_action=None):
         if node.node_type == 0:
-            legal_actions = [a for a in range(4) if is_move_legal(node.board, a)]
-            for action in legal_actions:
+            legal_actions = []
+            for a in range(4):
+                if is_move_legal(node.board, a):
+                    legal_actions.append(a)
+            def rec_expand(idx):
+                if idx >= len(legal_actions):
+                    return node
+                action = legal_actions[idx]
                 if action not in node.children:
                     afterstate, reward = get_afterstate_and_reward(node.board, action)
                     afterstate_node = NodeForAfterstate(afterstate, node, reward)
                     node.children[action] = afterstate_node
                     return afterstate_node
-
-                elif node.node_type == 1:
-                    empty_location = list(zip(*np.where(node.board == 0)))
-            for row, col in empty_location:
+                return rec_expand(idx + 1)
+            return rec_expand(0)
+        elif node.node_type == 1:
+            empty_location = list(zip(*np.where(node.board == 0)))
+            def rec_expand_after(idx):
+                if idx >= len(empty_location):
+                    return node
+                row, col = empty_location[idx]
                 key1 = (row, col, 2)
                 key2 = (row, col, 4)
                 if key1 not in node.children:
                     new_board = node.board.copy()
                     new_board[row, col] = 2
                     state_node = NodeForState(new_board, node)
-                    self.children[(row, col, 2)] = state_node
+                    node.children[key1] = state_node
                     return state_node
                 elif key2 not in node.children:
                     new_board = node.board.copy()
                     new_board[row, col] = 4
                     state_node = NodeForState(new_board, node)
-                    self.children[(row, col, 4)] = state_node
+                    node.children[key2] = state_node
                     return state_node
+                return rec_expand_after(idx + 1)
+            return rec_expand_after(0)
         return node
 
     def simulate(self, node):
         board = node.board
-        afterstate_value = self.approximator.value(convert_to_flat(board))
+        flat_board = convert_to_flat(board)
+        base_value = self.approximator.value(flat_board)
         if node.node_type == 1:
-            return (node.reward + afterstate_value) / self.scaling
+            return (node.reward + base_value) / self.scaling
         else:
-            legal_actions = [a for a in range(4) if is_move_legal(board, a)]
-            if not legal_actions:
+            legal_actions = []
+            for a in range(4):
+                if is_move_legal(board, a):
+                    legal_actions.append(a)
+            if len(legal_actions) == 0:
                 return 0
-            max_value = -float('inf')
-            for action in legal_actions:
+            def rec_simulate(idx, curr_max):
+                if idx >= len(legal_actions):
+                    return curr_max
+                action = legal_actions[idx]
                 new_board, reward = get_afterstate_and_reward(board, action)
                 value = self.approximator.value(convert_to_flat(new_board))
                 action_value = (reward + value) / self.scaling
-                max_value = max(max_value, action_value)
-            return max_value
-
+                new_max = action_value if action_value > curr_max else curr_max
+                return rec_simulate(idx + 1, new_max)
+            return rec_simulate(0, -float('inf'))
 
     def backpropagate(self, node, value, trajectory):
         node.visits += 1
-        x = (value - node.value) / node.visits
-        node.value += x
-
-        for parent, action in reversed(trajectory):
+        node.value += (value - node.value) / node.visits
+        def rec_back(i):
+            if i < 0:
+                return
+            parent, action = trajectory[i]
             child = parent.children[action]
-            value = child.value
             parent.visits += 1
-            x = (value - parent.value) / parent.visits
-            parent.value += x
+            parent.value += (child.value - parent.value) / parent.visits
+            rec_back(i - 1)
+        rec_back(len(trajectory) - 1)
 
     def best_action(self, root, legal_actions):
-        best_action = None
-        best_value = -float('inf')
-        for action in legal_actions:
-            if action not in root.children:
-                value = 0
-                if value > best_value:
-                    best_value = value
-                    best_action = action
-            else:
-                child = root.children[action]
-                value = child.visits
-                if value > best_value:
-                    best_value = child.visits
-                    best_action = action
-        return best_action
+        def rec_best(idx, best_act, best_val):
+            if idx >= len(legal_actions):
+                return best_act
+            action = legal_actions[idx]
+            value = root.children[action].visits if action in root.children else 0
+            if value > best_val:
+                best_val, best_act = value, action
+            return rec_best(idx + 1, best_act, best_val)
+        return rec_best(0, None, -float('inf'))
 
 patterns = [
     [0, 1, 2, 3, 4, 5],
