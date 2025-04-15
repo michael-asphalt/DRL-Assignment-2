@@ -9,6 +9,7 @@ import copy
 from collections import defaultdict
 import gc
 import helper
+import sys
 
 COLOR_MAP = {
     0: "#cdc1b4", 2: "#eee4da", 4: "#ede0c8", 8: "#f2b179",
@@ -390,12 +391,12 @@ def best_move_selection(env_board, approximator):
 
 class NodeForState:
     def __init__(self, board, parent=None):
-        self.node_type = 0  # 0 for state node, 1 for afterstate node
         self.board = board.copy()
-        self.parent = parent
-        self.children = {}  # action -> NodeForAfterstate
+        self.node_type = 0
         self.visits = 0
         self.value = 0.0
+        self.parent = parent
+        self.children = {}  # action -> NodeForAfterstate
 
     def is_fully_expanded(self, legal_actions):
         def rec_check(idx):
@@ -422,13 +423,13 @@ class NodeForState:
 
 class NodeForAfterstate:
     def __init__(self, board, parent=None, reward=0):
-        self.node_type = 1
         self.board = board.copy()
         self.parent = parent
         self.children = {}  # (row, col, value) -> NodeForState
+        self.node_type = 1
+        self.reward = reward
         self.visits = 0
         self.value = 0.0
-        self.reward = reward
 
     def is_fully_expanded(self, empty_location):
         def rec_count(idx):
@@ -440,10 +441,17 @@ class NodeForAfterstate:
 
 class td_mcts:
     def __init__(self, approximator, num_iterations=1000, exploration_weight=1.0, scaling=4096):
-        self.approximator = approximator
         self.num_iterations = num_iterations
-        self.exploration_weight = exploration_weight
+        self.approximator = approximator
+        self.debug_messages = []
+        self.mcts_flag = False
         self.scaling = scaling
+        self.exploration_weight = exploration_weight
+
+    def debug(self, message):
+        self.debug_messages = []
+        self.debug_messages.append(message)
+        # print(message, file=sys.stderr)
 
     def tmp_env(self, board):
         env = Game2048Env()
@@ -483,8 +491,10 @@ class td_mcts:
                     return node
                 action = legal_actions[idx]
                 if action not in node.children:
+                    self.debug(f"expanding node with action {action}")
                     afterstate, reward = get_afterstate_and_reward(node.board, action)
                     afterstate_node = NodeForAfterstate(afterstate, node, reward)
+                    self.mcts_flag = True
                     node.children[action] = afterstate_node
                     return afterstate_node
                 return rec_expand(idx + 1)
@@ -531,21 +541,26 @@ class td_mcts:
                     return curr_max
                 action = legal_actions[idx]
                 new_board, reward = get_afterstate_and_reward(board, action)
-                value = self.approximator.value(convert_to_flat(new_board))
+                self.debug(f"simulating node with action {action}")
+                flat_new = convert_to_flat(new_board)
+                value = self.approximator.value(flat_new)
                 action_value = (reward + value) / self.scaling
                 new_max = action_value if action_value > curr_max else curr_max
                 return rec_simulate(idx + 1, new_max)
             return rec_simulate(0, -float('inf'))
 
     def backpropagate(self, node, value, trajectory):
+        self.debug(f"backpropagating node with value {value}")
         node.visits += 1
         node.value += (value - node.value) / node.visits
+        self.mcts_flag = True
         def rec_back(i):
             if i < 0:
                 return
-            parent, action = trajectory[i]
-            child = parent.children[action]
+            parent = trajectory[i][0]
+            action = trajectory[i][1]
             parent.visits += 1
+            child = parent.children[action]
             parent.value += (child.value - parent.value) / parent.visits
             rec_back(i - 1)
         rec_back(len(trajectory) - 1)
@@ -560,6 +575,7 @@ class td_mcts:
                 best_val, best_act = value, action
             return rec_best(idx + 1, best_act, best_val)
         return rec_best(0, None, -float('inf'))
+
 
 patterns = [
     [0, 1, 2, 3, 4, 5],
