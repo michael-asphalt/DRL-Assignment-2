@@ -217,17 +217,14 @@ class NTupleApproximator:
     def __init__(self, board_size, patterns, iso=8):
         self.board_size = board_size
         self.features = []
-        
-        # Recursively initialize features from the patterns list.
         def init_features(idx):
             if idx < len(patterns):
                 # self.features.append(helper.PatternFeature(patterns[idx], iso))
-                self.features.append(PatternFeature(patterns[idx], iso))
+                self.features.append(helper.PatternFeature(patterns[idx], iso))
                 init_features(idx + 1)
         init_features(0)
 
     def value(self, flat_board):
-        # Recursively sum the estimates from each feature.
         def rec_value(i):
             if i >= len(self.features):
                 return 0
@@ -235,7 +232,6 @@ class NTupleApproximator:
         return rec_value(0)
 
     def update(self, flat_board, delta, alpha):
-        # Recursively update each feature.
         def rec_update(i):
             if i < len(self.features):
                 self.features[i].update(flat_board, alpha * delta)
@@ -254,7 +250,6 @@ class NTupleApproximator:
             rec_load(0)
 
 def tile_to_number(tile):
-    # Use a simplified conditional expression for clarity.
     if tile:
         return int(math.log(tile, 2))
     return 0
@@ -262,7 +257,6 @@ def tile_to_number(tile):
 def convert_to_flat(env_board):
     flat = []
     nrows, ncols = env_board.shape
-    # Recursively traverse the board in row-major order.
     def rec(i, j):
         if i == nrows:
             return
@@ -300,7 +294,6 @@ def compress_and_merge(row):
 
 def afterstate_move_left(board):
     new_board = board.copy()
-    # Recursively process each row.
     def process_row(i, total_reward):
         if i >= 4:
             return total_reward
@@ -313,7 +306,6 @@ def afterstate_move_left(board):
 
 def afterstate_move_right(board):
     new_board = board.copy()
-    # Recursively process each row in reverse.
     def process_row(i, total_reward):
         if i >= 4:
             return total_reward
@@ -326,7 +318,6 @@ def afterstate_move_right(board):
 
 def afterstate_move_up(board):
     new_board = board.copy()
-    # Recursively process each column.
     def process_col(j, total_reward):
         if j >= 4:
             return total_reward
@@ -341,7 +332,6 @@ def afterstate_move_up(board):
 
 def afterstate_move_down(board):
     new_board = board.copy()
-    # Recursively process each column in reverse.
     def process_col(j, total_reward):
         if j >= 4:
             return total_reward
@@ -355,7 +345,6 @@ def afterstate_move_down(board):
     return new_board, total_reward
 
 def get_afterstate_and_reward(board, action):
-    # Use a dictionary to map actions to functions.
     move_funcs = {
         0: afterstate_move_up,
         1: afterstate_move_down,
@@ -382,8 +371,6 @@ def best_move_selection(env_board, approximator):
     best_action = None
     best_value = -float('inf')
     current = env_board
-    
-    # Recursively evaluate each possible action.
     def rec(action, best_action, best_value):
         if action >= 4:
             return best_action, best_value
